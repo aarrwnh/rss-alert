@@ -1,18 +1,24 @@
-use std::{error::Error, fmt::Debug, hash::Hash, rc::Rc, str::FromStr, time::Duration};
+use std::{fmt::Debug, hash::Hash, rc::Rc, str::FromStr, time::Duration};
 
 use chrono::DateTime;
 use roxmltree::Node;
 
-use crate::Toastable;
+use crate::{Result, Toastable};
 
-pub fn get_rss_feed(endpoint: &str) -> Result<String, Box<dyn Error>> {
+pub fn get_rss_feed(endpoint: &str) -> Result<String> {
     Ok(reqwest::blocking::get(endpoint)?.text()?)
 }
 
-pub fn fetch_items(endpoint: &str) -> Result<Vec<Rc<Element>>, Box<dyn Error>> {
+pub fn fetch_items(endpoint: &str) -> Result<Vec<Rc<Element>>> {
     let body = get_rss_feed(endpoint)?;
-    let items = roxmltree::Document::parse(&body)
-        .expect("not a valid XML string")
+    let doc = match roxmltree::Document::parse(&body) {
+        Ok(doc) => doc,
+        Err(err) => {
+            return Err(format!("parsed body is not a valid XML string: {err}").into());
+        }
+    };
+
+    Ok(doc
         .descendants()
         .filter_map(|n| {
             let item = n.children().filter_map(|n| {
@@ -28,8 +34,8 @@ pub fn fetch_items(endpoint: &str) -> Result<Vec<Rc<Element>>, Box<dyn Error>> {
             };
             Some(Rc::new(element))
         })
-        .collect();
-    Ok(items)
+        .rev()
+        .collect())
 }
 
 // ----------------------------------------------------------------------------------
@@ -58,11 +64,16 @@ macro_rules! item {
             }
         }
 
-#[rustfmt::skip]
         impl Toastable for $name {
-            fn get_title(&self) -> &str    { &self.title }
-            fn get_link(&self) -> &str     { &self.link }
-            fn get_timestamp(&self) -> i64 { self.pub_date }
+            fn get_title(&self) -> &str {
+                &self.title
+            }
+            fn get_link(&self) -> &str {
+                &self.link
+            }
+            fn get_timestamp(&self) -> i64 {
+                self.pub_date
+            }
         }
 
         impl<'a: 'b, 'b> FromIterator<(Tag, Node<'a, 'b>)> for $name {
@@ -92,7 +103,7 @@ item!(Item, |item: &mut Item, tag, text, _| {
     }
 });
 
-// custom schema?
+// custom spec?
 item!(Entry, |item: &mut Entry, tag, text, node: Node<'_, '_>| {
     match tag {
         Tag::Title => item.title = text,
@@ -124,7 +135,7 @@ enum Tag {
 impl FromStr for Tag {
     type Err = &'static str;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         Ok(match s {
             "title" => Tag::Title,
             "link" => Tag::Link,

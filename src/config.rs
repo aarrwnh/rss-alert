@@ -1,8 +1,8 @@
+use crate::Result;
 use std::{
     collections::{BTreeMap, HashMap},
-    error::Error,
-    fmt::Debug,
-    io::Read,
+    fmt::{Debug, Write as _},
+    io::Read as _,
     path::{Path, PathBuf},
     str::FromStr,
     time::Duration,
@@ -18,8 +18,26 @@ pub struct Config {
     pub cycle_interval: Duration,
 }
 
+impl Default for Config {
+    #[inline]
+    fn default() -> Self {
+        Self::new(600, 5)
+    }
+}
+
 impl Config {
+    #[inline]
+    #[must_use]
+    /// # Panics
+    ///
+    /// it will
     pub fn new(cycle_interval: u64, toast_duration: u64) -> Self {
+        fn parse_number(default: u64, x: Option<&String>) -> Duration {
+            Duration::from_secs(x.map_or(default, |v| {
+                u64::from_str(v).expect("tried to parse a number")
+            }))
+        }
+
         let args = Self::get_args();
         let file_path = PathBuf::from(args.get("--path").expect("--path is required"));
 
@@ -30,20 +48,9 @@ impl Config {
 
         Self {
             file_path,
-            toast_duration: Self::parse_number(toast_duration, args.get("--toast")),
-            cycle_interval: Self::parse_number(cycle_interval, args.get("--interval")),
+            toast_duration: parse_number(toast_duration, args.get("--toast")),
+            cycle_interval: parse_number(cycle_interval, args.get("--interval")),
         }
-    }
-
-    pub fn default() -> Self {
-        Config::new(600, 5)
-    }
-
-    fn parse_number(default: u64, x: Option<&String>) -> Duration {
-        Duration::from_secs(match x {
-            Some(v) => u64::from_str(v).expect("tried to parse a number"),
-            None => default,
-        })
     }
 
     fn get_args() -> HashMap<String, String> {
@@ -53,28 +60,34 @@ impl Config {
             .collect()
     }
 
-    pub fn parse_feeds(&self) -> Result<Vec<String>, Box<dyn Error>> {
+    /// # Errors
+    ///
+    /// This function will return an error if config file is not found.
+    pub fn parse_feeds(&self) -> Result<Vec<Feed>> {
         let buf = read_file(&self.file_path)?;
         Ok(parse_feeds_var(&buf))
     }
 }
 
-fn read_file<P: AsRef<Path>>(path: P) -> Result<String, Box<dyn Error>> {
+#[inline]
+fn read_file(path: impl AsRef<Path>) -> Result<String> {
     let mut file = std::fs::File::open(path.as_ref())?;
     let mut buf = String::new();
-    let _ = file.read_to_string(&mut buf);
+    file.read_to_string(&mut buf)?;
     Ok(buf.trim().to_owned())
 }
 
 // s = "var1={1|2|3}&var2={4|5}"
 // result = [ f"var1={v1}&var2{v2}" for v1 in [1,2,3] for v2 in [4,5] ]
-fn parse_feeds_var(s: &str) -> Vec<String> {
+fn parse_feeds_var(s: &str) -> Vec<Feed> {
     let mut feeds = Vec::new();
     let mut temp = Vec::new();
     let mut args = BTreeMap::new();
 
+    let mut options = HashMap::new();
+
     for line in s.split('\n') {
-        if line.trim().starts_with("#") {
+        if line.trim().starts_with('#') {
             continue;
         }
 
@@ -82,41 +95,63 @@ fn parse_feeds_var(s: &str) -> Vec<String> {
         let end = line.len();
 
         while index < end {
-            let rest = &line[index..end];
-            match rest.find('{') {
-                Some(mut p) => {
-                    temp.push(&rest[0..p]);
-                    if let Some(j) = rest[p..].find('}') {
-                        let v = rest[p + 1..p + j].split('|').collect();
-                        args.insert(temp.len(), v); // key=index in template
-                        temp.push(""); // empty position for `replacement`
-                        p += j;
-                    }
-                    index += p + 1;
+            let mut rest = &line[index..end];
+            // parse some options
+            if index == 0 && rest.find('[').map(|x| x <= 2).is_some_and(|x| x) {
+                if let Some(j) = rest[0..].find(']') {
+                    rest[1..j].split(' ').for_each(|x| {
+                        if let Some((key, value)) = x.split_once('=')
+                            && ALLOWED_KEYS.contains(&key)
+                        {
+                            if let Ok(value) = Value::from_str(value) {
+                                options.insert(key.to_string(), value);
+                            }
+                        }
+                    });
+                    index += j + 2;
+                    rest = &rest[index..];
                 }
-                None => {
-                    temp.push(rest);
-                    index = end;
+            }
+
+            // parse url
+            if let Some(mut p) = rest.find('{') {
+                temp.push(&rest[0..p]);
+                if let Some(j) = rest[p..].find('}') {
+                    let v = rest[p + 1..p + j].split('|').collect();
+                    args.insert(temp.len(), v); // key=index in template
+                    temp.push(""); // empty position for `replacement`
+                    p += j;
                 }
+                index += p + 1;
+            } else {
+                temp.push(rest);
+                index = end;
             }
         }
 
         if args.is_empty() {
             assert_eq!(temp.len(), 1);
-            feeds.push(temp[0].to_owned());
+            feeds.push(Feed {
+                url: temp[0].to_owned(),
+                options: options.clone(),
+            });
         } else {
             let entries = args.keys().collect::<Vec<_>>();
             let arrays = args.values().collect::<Vec<_>>();
             for r in combinations(&arrays) {
-                for (pos, replacement) in r.into_iter().enumerate() {
+                for (pos, replacement) in r.iter().enumerate() {
                     temp[*entries[pos]] = replacement;
                 }
-                feeds.push(temp.join(""));
+                feeds.push(Feed {
+                    url: temp.join(""),
+                    options: options.clone(),
+                });
             }
         }
 
         temp.clear();
         args.clear();
+        options.clear();
     }
     feeds
 }
@@ -141,7 +176,7 @@ fn combinations<T: Copy + Debug>(arrays: &[&Vec<T>]) -> Vec<Vec<T>> {
         match arrays[i].len() {
             0 => (),
             x => count *= x,
-        };
+        }
     }
 
     (0..count)
@@ -149,13 +184,117 @@ fn combinations<T: Copy + Debug>(arrays: &[&Vec<T>]) -> Vec<Vec<T>> {
         .collect()
 }
 
+// ----------------------------------------------------------------------------------
+//   - Feed -
+// ----------------------------------------------------------------------------------
+const ALLOWED_KEYS: &[&str] = &["foreground", "background", "no_toast"];
+
+#[derive(Debug, Clone)]
+pub struct Feed {
+    pub url: String,
+    pub options: HashMap<String, Value>,
+}
+
+impl Feed {
+    const COLOR_OPTS: [(&'static str, &'static str); 2] =
+        [("foreground", "38"), ("background", "48")];
+
+    /// Put colors into ANSI escape sequence.
+    pub fn wrap_color(&self, text: impl AsRef<str>) -> Result<String> {
+        let mut res = String::new();
+        for (key, attr) in Self::COLOR_OPTS {
+            if let Some(color) = self.options.get(key) {
+                write!(res, "\x1b[{attr};5;{color}m")?;
+            }
+        }
+        let with_escape = !res.is_empty();
+        write!(res, "{}", text.as_ref())?;
+        if with_escape {
+            write!(res, "\x1b[m")?;
+        }
+        Ok(res)
+    }
+
+    /// Check if we can show toast or just log text in console.
+    #[must_use]
+    pub fn no_toast(&self) -> bool {
+        match self.options.get("no_toast") {
+            Some(Value::Bool(b)) => *b,
+            _ => false,
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------------
+//   - Value -
+// ----------------------------------------------------------------------------------
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Value {
+    Int(i32),
+    Bool(bool),
+    String(String),
+}
+
+impl From<&str> for Value {
+    fn from(s: &str) -> Self {
+        if let Ok(v) = s.parse::<bool>() {
+            return Self::Bool(v);
+        }
+        if let Ok(v) = s.parse::<i32>() {
+            return Self::Int(v);
+        }
+        Self::String(s.to_string())
+    }
+}
+
+impl FromStr for Value {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s.is_empty() {
+            Err("empty value".to_string())
+        } else {
+            Ok(s.into())
+        }
+    }
+}
+
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let c = match *self {
+            Self::Int(i) => i.to_string(),
+            Self::Bool(b) => if b { "true" } else { "false" }.to_string(),
+            Self::String(ref s) => s.to_string(),
+        };
+        write!(f, "{c}")
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+
+    impl PartialEq<&str> for Feed {
+        fn eq(&self, other: &&str) -> bool {
+            self.url.eq(other)
+        }
+    }
 
     #[test]
     fn expand_vars() {
         let a = parse_feeds_var("{A|B|C}_{D|E}\nasdf\n# {DD|CC}");
         assert_eq!(a, vec!["A_D", "A_E", "B_D", "B_E", "C_D", "C_E", "asdf"]);
+    }
+
+    #[test]
+    fn expand_vars_and_options() {
+        let a = parse_feeds_var(
+            "[foreground=123 backgroun=321 no_toast=true] {A|B|C}_{D|E}\nasdf\n# {DD|CC}",
+        );
+        assert_eq!(a, vec!["A_D", "A_E", "B_D", "B_E", "C_D", "C_E", "asdf"]);
+        let mut o = HashMap::new();
+        o.insert("foreground".into(), "123".into());
+        o.insert("no_toast".into(), "true".into());
+        assert_eq!(a[0].options, o);
     }
 }

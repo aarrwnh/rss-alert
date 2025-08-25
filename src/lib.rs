@@ -5,6 +5,9 @@ use tauri_winrt_notification::{IconCrop, Toast};
 pub mod config;
 pub mod item;
 
+mod error;
+pub use error::Result;
+
 static ICON_PATH: LazyLock<std::path::PathBuf> =
     LazyLock::new(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("rss.png"));
 
