@@ -97,7 +97,7 @@ item!(Item, |item: &mut Item, tag, text, _| {
         Tag::Guid => item.link = text,
         Tag::Date => match DateTime::parse_from_rfc2822(&text) {
             Ok(dt) => item.pub_date = dt.timestamp(),
-            Err(e) => todo!("{}", e),
+            Err(_) => (), // premature end of input
         },
         _ => {}
     }
@@ -115,7 +115,7 @@ item!(Entry, |item: &mut Entry, tag, text, node: Node<'_, '_>| {
         }
         Tag::Updated => match DateTime::parse_from_rfc3339(&text) {
             Ok(dt) => item.pub_date = dt.timestamp(),
-            Err(e) => todo!("{}", e),
+            Err(_) => (),
         },
         _ => {}
     }
@@ -157,21 +157,25 @@ pub enum Element {
 }
 
 impl Element {
+    #[must_use]
     pub fn inner(&self) -> &dyn Toastable {
         match self {
-            Element::Item(item) => item,
-            Element::Entry(entry) => entry,
+            Self::Item(item) => item,
+            Self::Entry(entry) => entry,
         }
     }
 
+    #[must_use]
     pub fn timestamp(&self) -> i64 {
         self.inner().get_timestamp()
     }
 
+    #[must_use]
     pub fn title(&self) -> &str {
         self.inner().get_title()
     }
 
+    #[must_use]
     pub fn link(&self) -> &str {
         self.inner().get_link()
     }

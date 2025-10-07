@@ -91,15 +91,16 @@ fn parse_feeds_var(s: &str) -> Vec<Feed> {
             continue;
         }
 
+        let lookup = |start: usize, end: usize| &line[start..end];
+
         let mut index = 0;
         let end = line.len();
 
         while index < end {
-            let mut rest = &line[index..end];
             // parse some options
-            if index == 0 && rest.find('[').map(|x| x <= 2).is_some_and(|x| x) {
-                if let Some(j) = rest[0..].find(']') {
-                    rest[1..j].split(' ').for_each(|x| {
+            if index == 0 && lookup(index, end).find('[').is_some_and(|x| x == 0) {
+                if let Some(j) = line[index..].find(']') {
+                    line[index + 1..j].split(' ').for_each(|x| {
                         if let Some((key, value)) = x.split_once('=')
                             && ALLOWED_KEYS.contains(&key)
                         {
@@ -109,20 +110,22 @@ fn parse_feeds_var(s: &str) -> Vec<Feed> {
                         }
                     });
                     index += j + 2;
-                    rest = &rest[index..];
                 }
             }
 
+            let rest = lookup(index, end);
+
             // parse url
             if let Some(mut p) = rest.find('{') {
-                temp.push(&rest[0..p]);
-                if let Some(j) = rest[p..].find('}') {
-                    let v = rest[p + 1..p + j].split('|').collect();
+                p += index;
+                temp.push(lookup(index, p));
+                if let Some(j) = lookup(p, end).find('}') {
+                    let v = lookup(p + 1, p + j).split('|').collect();
                     args.insert(temp.len(), v); // key=index in template
                     temp.push(""); // empty position for `replacement`
                     p += j;
                 }
-                index += p + 1;
+                index = p + 1;
             } else {
                 temp.push(rest);
                 index = end;
@@ -173,9 +176,9 @@ fn combinations<T: Copy + Debug>(arrays: &[&Vec<T>]) -> Vec<Vec<T>> {
             Some(v) => v * arrays[i + 1].len(),
             None => 1,
         };
-        match arrays[i].len() {
-            0 => (),
-            x => count *= x,
+        let x = arrays[i].len();
+        if x > 0 {
+            count *= x;
         }
     }
 
@@ -187,12 +190,25 @@ fn combinations<T: Copy + Debug>(arrays: &[&Vec<T>]) -> Vec<Vec<T>> {
 // ----------------------------------------------------------------------------------
 //   - Feed -
 // ----------------------------------------------------------------------------------
-const ALLOWED_KEYS: &[&str] = &["foreground", "background", "no_toast"];
+const ALLOWED_KEYS: &[&str] = &["foreground", "background", "toast"];
 
 #[derive(Debug, Clone)]
 pub struct Feed {
     pub url: String,
     pub options: HashMap<String, Value>,
+}
+
+impl std::fmt::Display for Feed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let e = self.wrap_color(&self.url).map_err(|_| std::fmt::Error)?;
+        write!(f, "{e}")?;
+        for (k, v) in &self.options {
+            if ALLOWED_KEYS.contains(&k.as_str()) {
+                write!(f, " {k}={v}")?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Feed {
@@ -203,9 +219,8 @@ impl Feed {
     pub fn wrap_color(&self, text: impl AsRef<str>) -> Result<String> {
         let mut res = String::new();
         for (key, attr) in Self::COLOR_OPTS {
-            if let Some(color) = self.options.get(key) {
-                write!(res, "\x1b[{attr};5;{color}m")?;
-            }
+            let Some(color) = self.options.get(key) else { continue };
+            write!(res, "\x1b[{attr};5;{color}m")?;
         }
         let with_escape = !res.is_empty();
         write!(res, "{}", text.as_ref())?;
@@ -217,10 +232,10 @@ impl Feed {
 
     /// Check if we can show toast or just log text in console.
     #[must_use]
-    pub fn no_toast(&self) -> bool {
-        match self.options.get("no_toast") {
+    pub fn can_toast(&self) -> bool {
+        match self.options.get("toast") {
             Some(Value::Bool(b)) => *b,
-            _ => false,
+            _ => true,
         }
     }
 }
@@ -251,11 +266,7 @@ impl FromStr for Value {
     type Err = String;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        if s.is_empty() {
-            Err("empty value".to_string())
-        } else {
-            Ok(s.into())
-        }
+        if s.is_empty() { Err("empty value".to_string()) } else { Ok(s.into()) }
     }
 }
 
@@ -289,12 +300,12 @@ mod test {
     #[test]
     fn expand_vars_and_options() {
         let a = parse_feeds_var(
-            "[foreground=123 backgroun=321 no_toast=true] {A|B|C}_{D|E}\nasdf\n# {DD|CC}",
+            "[foreground=123 backgroun=321 toast=true] {A|B|C}_{D|E}\nasdf\n# {DD|CC}",
         );
         assert_eq!(a, vec!["A_D", "A_E", "B_D", "B_E", "C_D", "C_E", "asdf"]);
         let mut o = HashMap::new();
         o.insert("foreground".into(), "123".into());
-        o.insert("no_toast".into(), "true".into());
+        o.insert("toast".into(), "true".into());
         assert_eq!(a[0].options, o);
     }
 }

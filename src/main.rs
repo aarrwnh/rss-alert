@@ -6,12 +6,12 @@ use std::rc::Rc;
 use std::thread::sleep;
 use std::{collections::HashSet, time::Duration};
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 
 use rss_alert::{Result, config, item};
 
 /// Hardcoded date offest cutout.
-static PUBDATE_OFFSET: i64 = 60 * 60 * 12;
+const PUBDATE_OFFSET: i64 = 60 * 60 * 12;
 
 fn main() -> Result<()> {
     let config = config::Config::default();
@@ -25,7 +25,7 @@ fn main() -> Result<()> {
 
     for feed in &mut feeds {
         feed.url = urlencoding::decode(&feed.url).expect("UTF-8").to_string();
-        println!("#  {}", feed.wrap_color(&feed.url)?);
+        println!("#  {}", feed);
     }
     println!();
 
@@ -34,9 +34,21 @@ fn main() -> Result<()> {
     let mut out = String::new();
     let mut stdout = std::io::stdout();
     let interval = Duration::from_millis(100);
+    let mut prev_update = Utc::now();
+    let td = chrono::TimeDelta::new(config.cycle_interval.as_secs() as i64 * 3, 0).unwrap();
 
     loop {
         let n = Utc::now();
+        let diff = n - prev_update;
+        prev_update = n;
+
+        // XXX: skip once in case loop starts relatively fast after pc wake up?
+        if diff > td {
+            println!("-------");
+            sleep(config.cycle_interval);
+            continue;
+        }
+
         let cutoff = n.timestamp() - PUBDATE_OFFSET;
 
         for feed in &feeds {
@@ -48,8 +60,6 @@ fn main() -> Result<()> {
                     x
                 }
                 Err(err) => {
-                    // https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda
-                    // out.write_str(&format!("\x1b]8;;{url}\x1b\\.\x1b]8;;\x1b[31m -< {err}\x1b[0m\n"))?;
                     let err = urlencoding::decode(&err.to_string())
                         .expect("UTF-8")
                         .to_string();
@@ -69,11 +79,11 @@ fn main() -> Result<()> {
             sleep(interval);
             stdout.flush()?;
 
-            let can_toast = !feed.no_toast();
+            let can_toast = feed.can_toast();
 
             for el in items.iter().filter(|x| x.timestamp() > cutoff) {
                 if cache.insert(Rc::clone(el)) && entries > 0 {
-                    let pub_date = DateTime::from_timestamp(el.timestamp(), 0)
+                    let pub_date = chrono::DateTime::from_timestamp(el.timestamp(), 0)
                         .map(|dt| dt.format("%H:%M"))
                         .expect("item publication date");
                     let line = format!("{pub_date} | {} | {}\n", el.link(), el.title());
