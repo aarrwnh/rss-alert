@@ -98,19 +98,19 @@ fn parse_feeds_var(s: &str) -> Vec<Feed> {
 
         while index < end {
             // parse some options
-            if index == 0 && lookup(index, end).find('[').is_some_and(|x| x == 0) {
-                if let Some(j) = line[index..].find(']') {
-                    line[index + 1..j].split(' ').for_each(|x| {
-                        if let Some((key, value)) = x.split_once('=')
-                            && ALLOWED_KEYS.contains(&key)
-                        {
-                            if let Ok(value) = Value::from_str(value) {
-                                options.insert(key.to_string(), value);
-                            }
-                        }
-                    });
-                    index += j + 2;
-                }
+            if index == 0
+                && lookup(index, end).find('[').is_some_and(|x| x == 0)
+                && let Some(j) = line[index..].find(']')
+            {
+                line[index + 1..j].split(' ').for_each(|x| {
+                    if let Some((key, value)) = x.split_once('=')
+                        && ALLOWED_KEYS.contains(&key)
+                        && let Ok(value) = Value::from_str(value)
+                    {
+                        options.insert(key.to_string(), value);
+                    }
+                });
+                index += j + 2;
             }
 
             let rest = lookup(index, end);
@@ -216,6 +216,10 @@ impl Feed {
         [("foreground", "38"), ("background", "48")];
 
     /// Put colors into ANSI escape sequence.
+    ///
+    /// # Errors
+    ///
+    /// Could fail while writing.
     pub fn wrap_color(&self, text: impl AsRef<str>) -> Result<String> {
         let mut res = String::new();
         for (key, attr) in Self::COLOR_OPTS {

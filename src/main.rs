@@ -8,10 +8,7 @@ use std::{collections::HashSet, time::Duration};
 
 use chrono::Utc;
 
-use rss_alert::{Result, config, item};
-
-/// Hardcoded date offest cutout.
-const PUBDATE_OFFSET: i64 = 60 * 60 * 12;
+use rss_alert::{Result, Timestamp, config, item};
 
 fn main() -> Result<()> {
     let config = config::Config::default();
@@ -29,13 +26,15 @@ fn main() -> Result<()> {
     }
     println!();
 
-    let mut entries = 0;
     let mut cache = HashSet::new();
     let mut out = String::new();
     let mut stdout = std::io::stdout();
     let interval = Duration::from_millis(100);
     let mut prev_update = Utc::now();
     let td = chrono::TimeDelta::new(config.cycle_interval.as_secs() as i64 * 3, 0).unwrap();
+
+    let mut cutoff = Timestamp::load()?;
+    let mut cutoff0 = 0;
 
     loop {
         let n = Utc::now();
@@ -49,7 +48,7 @@ fn main() -> Result<()> {
             continue;
         }
 
-        let cutoff = n.timestamp() - PUBDATE_OFFSET;
+        let prev_cutoff = cutoff.timestamp();
 
         for feed in &feeds {
             let url = &feed.url;
@@ -81,17 +80,27 @@ fn main() -> Result<()> {
 
             let can_toast = feed.can_toast();
 
-            for el in items.iter().filter(|x| x.timestamp() > cutoff) {
-                if cache.insert(Rc::clone(el)) && entries > 0 {
-                    let pub_date = chrono::DateTime::from_timestamp(el.timestamp(), 0)
-                        .map(|dt| dt.format("%H:%M"))
-                        .expect("item publication date");
-                    let line = format!("{pub_date} | {} | {}\n", el.link(), el.title());
-                    let line = feed.wrap_color(line)?;
-                    out.write_str(&line)?;
-                    if can_toast {
-                        el.show_toast(config.toast_duration);
-                    }
+            for el in items
+                .iter()
+                .filter(|x| x.timestamp() > prev_cutoff)
+                .filter(|x| cache.insert(Rc::clone(x)))
+            {
+                let ts = el.timestamp();
+                cutoff0 = cutoff0.max(ts);
+
+                // prevent toast on first run
+                if cutoff.timestamp() == 0 {
+                    continue;
+                }
+
+                let pub_date = chrono::DateTime::from_timestamp(ts, 0)
+                    .map(|dt| dt.format("%H:%M"))
+                    .expect("item publication date");
+                let line = format!("{pub_date} | {} | {}\n", el.link(), el.title());
+                let line = feed.wrap_color(line)?;
+                out.write_str(&line)?;
+                if can_toast {
+                    el.show_toast(config.toast_duration);
                 }
             }
         }
@@ -100,8 +109,8 @@ fn main() -> Result<()> {
         stdout.flush()?;
         out.clear();
 
-        cache.retain(|x| x.timestamp() > cutoff);
-        entries = cache.len();
+        cache.retain(|x| x.timestamp() > prev_cutoff);
+        cutoff.save(cutoff0)?;
 
         sleep(config.cycle_interval);
     }
