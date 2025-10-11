@@ -5,7 +5,11 @@ use std::{
 
 use crate::Result;
 
-pub struct Timestamp(i64, std::fs::File);
+pub struct Timestamp {
+    time: i64,
+    file: std::fs::File,
+    updated: bool,
+}
 
 impl Timestamp {
     /// # Errors
@@ -16,7 +20,12 @@ impl Timestamp {
     ///
     /// When temp file could not be read.
     pub fn load() -> Result<Self> {
-        let path = format!("{}.rss-notify", std::env::temp_dir().to_str().expect("could not get temp dir"));
+        let path = format!(
+            "{}.rss-notify",
+            std::env::temp_dir()
+                .to_str()
+                .expect("could not get temp dir")
+        );
         let mut file = OpenOptions::new()
             .write(true)
             .create(true)
@@ -27,21 +36,25 @@ impl Timestamp {
         let mut contents = String::new();
         file.read_to_string(&mut contents)
             .expect("could not read timestamp file");
-        let ts = contents.trim().parse::<i64>().unwrap_or_default();
-        Ok(Self(ts, file))
+        let time = contents.trim().parse::<i64>().unwrap_or_default();
+        Ok(Self {
+            time,
+            file,
+            updated: false,
+        })
     }
 
-    /// Update and save timestamp into temp file.
+    /// Write inner timestamp value into a temp file.
     ///
     /// # Errors
     ///
     /// Could fail while truncating/writing.
-    pub fn save(&mut self, ts: i64) -> Result<()> {
-        if ts > self.0 {
-            self.0 = ts;
-            self.1.set_len(0)?;
-            self.1.seek(std::io::SeekFrom::Start(0))?;
-            Ok(write!(self.1, "{ts}")?)
+    pub fn write(&mut self) -> Result<()> {
+        if self.updated {
+            self.file.set_len(0)?;
+            self.file.seek(std::io::SeekFrom::Start(0))?;
+            self.updated = false;
+            Ok(write!(self.file, "{}", self.time)?)
         } else {
             Ok(())
         }
@@ -49,6 +62,14 @@ impl Timestamp {
 
     #[must_use]
     pub const fn timestamp(&self) -> i64 {
-        self.0
+        self.time
+    }
+
+    /// Update inner timestamp value.
+    pub fn update(&mut self, ts: i64) {
+        if ts > self.time {
+            self.time = ts;
+            self.updated = true;
+        }
     }
 }

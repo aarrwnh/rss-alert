@@ -1,4 +1,6 @@
-use std::{fmt::Debug, hash::Hash, rc::Rc, str::FromStr, time::Duration};
+#![allow(dead_code)]
+
+use std::{fmt::Debug, fmt::Write, hash::Hash, rc::Rc, str::FromStr, time::Duration};
 
 use chrono::DateTime;
 use roxmltree::Node;
@@ -21,12 +23,12 @@ pub fn fetch_items(endpoint: &str) -> Result<Vec<Rc<Element>>> {
     Ok(doc
         .descendants()
         .filter_map(|n| {
-            let item = n.children().filter_map(|n| {
-                let Ok(tag) = Tag::from_str(n.tag_name().name()) else {
-                    return None;
-                };
-                Some((tag, n))
-            });
+            let item = n
+                .children()
+                .filter_map(|n| match Tag::from_str(n.tag_name().name()) {
+                    Ok(tag) => Some((tag, n)),
+                    Err(_) => None,
+                });
             let element = match n.tag_name().name() {
                 "item" => Element::Item(item.collect()),
                 "entry" => Element::Entry(item.collect()),
@@ -47,6 +49,7 @@ macro_rules! item {
         pub struct $name {
             title: String,
             link: String,
+            extra: Option<String>,
             /// UTC timestamp
             pub_date: i64,
         }
@@ -74,6 +77,9 @@ macro_rules! item {
             fn get_timestamp(&self) -> i64 {
                 self.pub_date
             }
+            fn get_extra(&self) -> Option<&str> {
+                self.extra.as_deref()
+            }
         }
 
         impl<'a: 'b, 'b> FromIterator<(Tag, Node<'a, 'b>)> for $name {
@@ -99,6 +105,10 @@ item!(Item, |item: &mut Item, tag, text, _| {
             Ok(dt) => item.pub_date = dt.timestamp(),
             Err(_) => (), // premature end of input
         },
+        Tag::Extra => {
+            let s = item.extra.get_or_insert(String::new());
+            _ = write!(s, " | {text}");
+        }
         _ => {}
     }
 });
@@ -130,6 +140,7 @@ enum Tag {
     Date,
     Updated,
     Guid,
+    Extra,
 }
 
 impl FromStr for Tag {
@@ -137,11 +148,12 @@ impl FromStr for Tag {
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         Ok(match s {
-            "title" => Tag::Title,
-            "link" => Tag::Link,
-            "guid" => Tag::Guid,
-            "pubDate" => Tag::Date,    // Mon, 13 Jan 2025 15:04:31 -0000
-            "updated" => Tag::Updated, // 2025-01-13T00:00:00+09:00
+            "title" => Self::Title,
+            "link" => Self::Link,
+            "guid" => Self::Guid,
+            "pubDate" => Self::Date,    // Mon, 13 Jan 2025 15:04:31 -0000
+            "updated" => Self::Updated, // 2025-01-13T00:00:00+09:00
+            "size" => Self::Extra,
             _ => return Err("xml tag not supported"),
         })
     }
@@ -178,6 +190,11 @@ impl Element {
     #[must_use]
     pub fn link(&self) -> &str {
         self.inner().get_link()
+    }
+
+    #[must_use]
+    pub fn extra(&self) -> Option<&str> {
+        self.inner().get_extra()
     }
 
     pub fn show_toast(&self, wait_sec: Duration) {
