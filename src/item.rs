@@ -1,6 +1,12 @@
 #![allow(dead_code)]
 
-use std::{fmt::Debug, fmt::Write, hash::Hash, rc::Rc, str::FromStr, time::Duration};
+use std::{
+    fmt::{Debug, Write},
+    hash::Hash,
+    ops::Deref,
+    rc::Rc,
+    str::FromStr,
+};
 
 use chrono::DateTime;
 use roxmltree::Node;
@@ -68,16 +74,16 @@ macro_rules! item {
         }
 
         impl Toastable for $name {
-            fn get_title(&self) -> &str {
+            fn title(&self) -> &str {
                 &self.title
             }
-            fn get_link(&self) -> &str {
+            fn link(&self) -> &str {
                 &self.link
             }
-            fn get_timestamp(&self) -> i64 {
+            fn timestamp(&self) -> i64 {
                 self.pub_date
             }
-            fn get_extra(&self) -> Option<&str> {
+            fn extra(&self) -> Option<&str> {
                 self.extra.as_deref()
             }
         }
@@ -168,36 +174,13 @@ pub enum Element {
     Entry(Entry),
 }
 
-impl Element {
-    #[must_use]
-    pub fn inner(&self) -> &dyn Toastable {
+impl Deref for Element {
+    type Target = dyn Toastable;
+
+    fn deref(&self) -> &Self::Target {
         match self {
             Self::Item(item) => item,
             Self::Entry(entry) => entry,
         }
-    }
-
-    #[must_use]
-    pub fn timestamp(&self) -> i64 {
-        self.inner().get_timestamp()
-    }
-
-    #[must_use]
-    pub fn title(&self) -> &str {
-        self.inner().get_title()
-    }
-
-    #[must_use]
-    pub fn link(&self) -> &str {
-        self.inner().get_link()
-    }
-
-    #[must_use]
-    pub fn extra(&self) -> Option<&str> {
-        self.inner().get_extra()
-    }
-
-    pub fn show_toast(&self, wait_sec: Duration) {
-        self.inner().show_toast(wait_sec);
     }
 }

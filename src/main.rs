@@ -69,7 +69,7 @@ impl App {
 
             // XXX: skip once in case loop starts relatively fast after pc wake up?
             if diff > self.td {
-                println!("-------");
+                println!("----------");
                 sleep(cycle_interval);
                 continue;
             }

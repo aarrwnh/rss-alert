@@ -21,15 +21,15 @@ static ICON_PATH: LazyLock<std::path::PathBuf> =
 //   - Toaster -
 // ----------------------------------------------------------------------------------
 pub trait Toastable: std::fmt::Debug {
-    fn get_title(&self) -> &str;
-    fn get_link(&self) -> &str;
-    fn get_timestamp(&self) -> i64;
-    fn get_extra(&self) -> Option<&str>;
+    fn title(&self) -> &str;
+    fn link(&self) -> &str;
+    fn timestamp(&self) -> i64;
+    fn extra(&self) -> Option<&str>;
 
     fn show_toast(&self, wait_sec: std::time::Duration) {
         Toast::new(Toast::POWERSHELL_APP_ID)
-            .title(self.get_title())
-            .text1(self.get_link())
+            .title(self.title())
+            .text1(self.link())
             .icon(&ICON_PATH, IconCrop::Square, "rss")
             .sound(None)
             .show()
