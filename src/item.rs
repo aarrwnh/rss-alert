@@ -17,14 +17,11 @@ pub fn get_rss_feed(endpoint: &str) -> Result<String> {
     Ok(reqwest::blocking::get(endpoint)?.text()?)
 }
 
+/// # Errors
 pub fn fetch_items(endpoint: &str) -> Result<Vec<Rc<Element>>> {
     let body = get_rss_feed(endpoint)?;
-    let doc = match roxmltree::Document::parse(&body) {
-        Ok(doc) => doc,
-        Err(err) => {
-            return Err(format!("parsed body is not a valid XML string: {err}").into());
-        }
-    };
+    let doc = roxmltree::Document::parse(&body)
+        .map_err(|err| format!("parsed body is not a valid XML string: {err}"))?;
 
     Ok(doc
         .descendants()

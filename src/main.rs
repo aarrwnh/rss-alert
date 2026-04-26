@@ -6,7 +6,7 @@ use std::{collections::HashSet, time::Duration};
 
 use chrono::{TimeDelta, Utc};
 
-use rss_alert::{Config, Element, Feed, Result, Timestamp, fetch_items};
+use rss_alert::{Config, Element, Feed, Result, Timestamp, fetch_items, into_hyperlink};
 
 fn main() -> Result<()> {
     if let Ok(mut app) = App::new(100) {
@@ -21,14 +21,14 @@ struct App {
     /// Temporary holder for the cutoff value.
     cutoff: Timestamp,
     /// Some interval between consecutive http calls when there's 0 toasts shown.
-    interval: Duration,
+    toast_interval: Duration,
     out: String,
     stdout: std::io::Stdout,
     td: TimeDelta,
 }
 
 impl App {
-    fn new(interval: u64) -> Result<Self> {
+    fn new(toast_interval: u64) -> Result<Self> {
         let config = Config::default();
         #[allow(clippy::cast_possible_wrap)]
         let td = TimeDelta::new(config.cycle_interval.as_secs() as i64 * 3, 0).unwrap();
@@ -37,7 +37,7 @@ impl App {
             cache: HashSet::new(),
             config,
             cutoff: Timestamp::load()?,
-            interval: Duration::from_millis(interval),
+            toast_interval: Duration::from_millis(toast_interval),
             out: String::new(),
             stdout: std::io::stdout(),
             td,
@@ -76,7 +76,7 @@ impl App {
 
             for feed in &feeds {
                 let Some(items) = self.fetch_items(&feed.url) else { continue };
-                sleep(self.interval);
+                sleep(self.toast_interval);
                 self.stdout.flush()?;
                 self.filter_items(feed, &items)?;
             }
@@ -140,9 +140,10 @@ impl App {
                 .map(|dt| dt.format("%H:%M"))
                 .expect("item publication date");
 
+            self.out
+                .write_str(&format!(" {}", into_hyperlink(el.link())))?;
             let line = feed.wrap_color(format!(
-                "{pub_date} | {} | {}{}\n",
-                el.link(),
+                " {pub_date} | {}{}\n",
                 el.title(),
                 el.extra().unwrap_or_default()
             ))?;

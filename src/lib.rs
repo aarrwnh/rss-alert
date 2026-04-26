@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 use tauri_winrt_notification::{IconCrop, Toast};
 
-pub mod item;
+mod item;
 pub use item::{Element, fetch_items};
 
 mod config;
@@ -22,8 +22,11 @@ static ICON_PATH: LazyLock<std::path::PathBuf> =
 // ----------------------------------------------------------------------------------
 pub trait Toastable: std::fmt::Debug {
     fn title(&self) -> &str;
+
     fn link(&self) -> &str;
+
     fn timestamp(&self) -> i64;
+
     fn extra(&self) -> Option<&str>;
 
     fn show_toast(&self, wait_sec: std::time::Duration) {
@@ -36,4 +39,22 @@ pub trait Toastable: std::fmt::Debug {
             .expect("unable to show toast notification");
         std::thread::sleep(wait_sec);
     }
+}
+
+#[macro_export]
+macro_rules! color {
+    ($c:expr, $w:expr) => {
+        format!("\x1b[{}m{}\x1b[0m", $c, $w)
+    };
+}
+
+const CONCEAL_COLOR: &str = "38;5;239";
+const ICON_MD_OPEN_IN_NEW: &str = "\u{f03cc}"; // nerd-fonts v3.4.0
+
+#[must_use]
+pub fn into_hyperlink(url: &str) -> String {
+    color!(
+        CONCEAL_COLOR,
+        format!("\x1b]8;;{url}\x1b\\{ICON_MD_OPEN_IN_NEW}\x1b]8;;\x1b\\")
+    )
 }
